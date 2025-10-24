@@ -35,12 +35,12 @@ local init = function()
             ---@type number[]
             local colorcolumn = {}
             for _, c in
-                ipairs(
-                    utils.tbl_join(
-                        vim.split(vim.api.nvim_get_option_value("colorcolumn", { win = win }), ","),
-                        vim.split(config.virtcolumn, ",")
-                    )
+            ipairs(
+                utils.tbl_join(
+                    vim.split(vim.api.nvim_get_option_value("colorcolumn", { win = win }), ","),
+                    vim.split(config.virtcolumn, ",")
                 )
+            )
             do
                 if vim.startswith(c, "+") then
                     if textwidth ~= 0 then
@@ -58,8 +58,12 @@ local init = function()
             table.sort(colorcolumn, function(a, b)
                 return a > b
             end)
+            -- Get actual window height and buffer line count for full coverage
+            local win_height = vim.api.nvim_win_get_height(win)
+            local buf_line_count = vim.api.nvim_buf_line_count(bufnr)
+            local botline = topline + win_height
 
-            pcall(vim.api.nvim_buf_clear_namespace, bufnr, M.namespace, topline, botline_guess)
+            pcall(vim.api.nvim_buf_clear_namespace, bufnr, M.namespace, topline, math.max(botline, buf_line_count))
 
             local highlight = config.highlight
             if type(highlight) == "string" then
@@ -70,8 +74,9 @@ local init = function()
                 char = { char }
             end
 
+            -- First, draw all lines that exist in the buffer
             local i = topline
-            while i <= botline_guess do
+            while i <= math.min(botline, buf_line_count) do
                 for j, column in ipairs(colorcolumn) do
                     local width = vim.api.nvim_win_call(win, function()
                         ---@diagnostic disable-next-line
@@ -101,6 +106,31 @@ local init = function()
                     i = fold_end
                 end
                 i = i + 1
+            end
+
+            -- If there are empty lines below buffer content, add virt_lines from the last buffer line
+            if botline > buf_line_count and buf_line_count > 0 then
+                local empty_lines_count = botline - buf_line_count
+                local virt_lines_table = {}
+
+                for _ = 1, empty_lines_count do
+                    local line_content = {}
+                    for j, column in ipairs(colorcolumn) do
+                        local column_index = #colorcolumn - j + 1
+                        table.insert(line_content, {
+                            string.rep(" ", column - 1 - leftcol) .. utils.tbl_get_index(char, column_index),
+                            utils.tbl_get_index(highlight, column_index)
+                        })
+                    end
+                    table.insert(virt_lines_table, line_content)
+                end
+
+                if #virt_lines_table > 0 then
+                    pcall(vim.api.nvim_buf_set_extmark, bufnr, M.namespace, buf_line_count - 1, 0, {
+                        virt_lines = virt_lines_table,
+                        virt_lines_above = false,
+                    })
+                end
             end
         end,
     })
